@@ -89,3 +89,29 @@ omarchy plugin update jk.scratchpad
 
 Updates are diff-previewed and require confirmation; local modifications are
 never overwritten silently.
+
+## Uninstalling
+
+```
+omarchy plugin remove jk.scratchpad
+```
+
+This deletes the plugin folder, unloads it from the shell, and removes its
+entries from `shell.json`.
+
+Two things are left behind (both harmless, both your call):
+
+- **Keybinding** — the SUPER+N binding lives in
+  `~/.config/hypr/bindings.lua`, which the plugin system never touches. To
+  remove it, delete this line:
+
+  ```lua
+  o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle jk.scratchpad")
+  ```
+
+- **Saved settings** — `~/.config/omarchy/scratchpad/settings.json` (your
+  vault and folder choice). Delete the file (or the `scratchpad` directory)
+  if you don't want it remembered on a future reinstall.
+
+Notes already written into your vault are regular markdown files — removing
+the plugin never touches them.
