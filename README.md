@@ -70,8 +70,17 @@ setup wizard.
 - Omarchy (Omarchy shell with plugin support)
 - An Obsidian vault anywhere on disk (the plugin only writes markdown files —
   Obsidian itself doesn't need to be running)
-- `qml6` and `jq` (both ship with Omarchy) for the optional folder-picker
-  dialog and vault detection
+
+External commands the plugin invokes (all ship with a stock Omarchy install,
+so there is nothing extra to install):
+
+| Command | Provided by | Used for |
+|---|---|---|
+| `hyprctl` | Hyprland | floating/centering the folder-picker window during setup |
+| `jq` | omarchy-base packages | parsing Obsidian's vault registry during vault detection |
+| `qml6` | Qt6 (a Quickshell runtime dependency) | the optional native folder-picker dialog |
+
+Core file operations (`mkdir`, `touch`, `grep`) use standard coreutils.
 
 ## Notes
 
