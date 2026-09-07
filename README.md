@@ -1,4 +1,4 @@
-# Scratchpad for Omarchy
+# Scratchpad for Obsidian
 
 A quick-capture scratchpad plugin for the [Omarchy](https://omarchy.org) shell
 that sends notes straight into your Obsidian vault.
