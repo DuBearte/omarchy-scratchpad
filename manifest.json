@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "jk.scratchpad",
+  "name": "Scratchpad",
+  "version": "1.0.0",
+  "author": "jk",
+  "license": "MIT",
+  "description": "Quick-capture scratchpad: a keybinding or bar icon opens a text box whose notes append as timestamped bullets to daily markdown files in an Obsidian vault. Setup wizard auto-detects registered vaults.",
+  "kinds": ["overlay", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Scratchpad.qml",
+    "barWidget": "BarButton.qml"
+  },
+  "barWidget": {
+    "displayName": "Scratchpad",
+    "description": "Open the Obsidian scratchpad capture box (right-click to reconfigure)",
+    "category": "Notes",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
