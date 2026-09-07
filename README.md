@@ -7,6 +7,14 @@ Press a keybinding (or click the bar icon), type a note, hit Enter — the note
 lands as a timestamped bullet in a daily markdown file inside your Obsidian
 vault. Obsidian picks it up instantly; no sync plugin or REST API needed.
 
+![Scratchpad capture box](preview.png)
+
+## Screenshots
+
+| Setup wizard — vault detection | Setup wizard — subfolder | Setup wizard — confirmation |
+|---|---|---|
+| ![Vault list](screenshots/wizard-vaults.png) | ![Subfolder](screenshots/wizard-folder.png) | ![Confirm](screenshots/wizard-confirm.png) |
+
 ## Features
 
 - **Fast capture** — SUPER+N opens a themed text box that matches your Omarchy
