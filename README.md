@@ -36,7 +36,7 @@ omarchy plugin add https://github.com/DuBearte/omarchy-scratchpad.git --enable
 Then add the keybinding in `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle jk.scratchpad")
+o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle io.github.dubearte.scratchpad")
 ```
 
 ## Usage
@@ -93,7 +93,7 @@ Core file operations (`mkdir`, `touch`, `grep`) use standard coreutils.
 ## Updating
 
 ```
-omarchy plugin update jk.scratchpad
+omarchy plugin update io.github.dubearte.scratchpad
 ```
 
 Updates are diff-previewed and require confirmation; local modifications are
@@ -102,7 +102,7 @@ never overwritten silently.
 ## Uninstalling
 
 ```
-omarchy plugin remove jk.scratchpad
+omarchy plugin remove io.github.dubearte.scratchpad
 ```
 
 This deletes the plugin folder, unloads it from the shell, and removes its
@@ -115,7 +115,7 @@ Two things are left behind (both harmless, both your call):
   remove it, delete this line:
 
   ```lua
-  o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle jk.scratchpad")
+  o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle io.github.dubearte.scratchpad")
   ```
 
 - **Saved settings** — `~/.config/omarchy/scratchpad/settings.json` (your

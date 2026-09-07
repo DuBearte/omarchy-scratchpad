@@ -45,7 +45,7 @@ Item {
 
   FileView {
     id: settingsFile
-    path: Quickshell.env("HOME") + "/.config/omarchy/scratchpad/settings.json"
+    path: Quickshell.env("HOME") + "/.config/omarchy/scratchpad-io.github.dubearte/settings.json"
     watchChanges: false
     printErrors: true
     onLoaded: root.applySettings()
@@ -126,7 +126,7 @@ Item {
   function dismiss() {
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "jk.scratchpad")
+      root.shell.hide((root.manifest && root.manifest.id) || "io.github.dubearte.scratchpad")
   }
 
   function toggle() {
