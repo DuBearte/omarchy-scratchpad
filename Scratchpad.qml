@@ -43,9 +43,14 @@ Item {
 
   // ------------------------------------------------------------------ state
 
+  // Plugin settings location. Lives outside the plugin folder so saving it
+  // doesn't trigger a plugin hot-reload.
+  readonly property string settingsPath:
+    Quickshell.env("HOME") + "/.config/omarchy/scratchpad-io.github.dubearte/settings.json"
+
   FileView {
     id: settingsFile
-    path: Quickshell.env("HOME") + "/.config/omarchy/scratchpad-io.github.dubearte/settings.json"
+    path: root.settingsPath
     watchChanges: false
     printErrors: true
     onLoaded: root.applySettings()
@@ -72,7 +77,12 @@ Item {
 
   function saveSettings() {
     var payload = JSON.stringify({ vaultPath: root.vaultPath, folder: root.folder }, null, 2) + "\n"
-    settingsFile.setText(payload)
+    // Fail closed if the settings path (or any of its parents) became a
+    // symlink since it was loaded: refuse to write through it.
+    settingsGuard.command = [helperPath, "replace-settings", root.settingsPath]
+    settingsGuard.environment = { "SCRATCHPAD_PAYLOAD": payload }
+    settingsGuard.stdinEnabled = false
+    settingsGuard.running = true
     root.log("settings saved: vault=" + root.vaultPath + " folder=" + root.folder)
   }
 
@@ -240,6 +250,12 @@ Item {
     capture()
   }
 
+  // Descriptor-based, symlink-safe writer helper. Resolves the vault and
+  // settings paths component-wise without following symlinks, opens the
+  // target file relative to the verified directory (O_NOFOLLOW), verifies it
+  // is a regular file, and writes through that descriptor. Fail closed.
+  readonly property string helperPath: pluginDir + "/scripts/note-writer.py"
+
   function capture() {
     var text = String(input.text || "").trim()
     if (!text) {
@@ -254,14 +270,33 @@ Item {
     var heading = "# " + datestamp
 
     root.log("saving note to " + root.vaultDir + "/" + datestamp + ".md")
-    noteWriter.command = ["bash", "-c",
-      "dir=$1; file=$2; heading=$3; line=$4; mkdir -p \"$dir\" || exit 1; if [ -d \"$file\" ]; then rmdir \"$file\" 2>/dev/null || { echo \"file-is-directory\" >&2; exit 1; }; fi; touch \"$file\" || exit 1; if ! grep -qxF \"$heading\" \"$file\"; then printf '%s\\n' \"$heading\" >> \"$file\"; fi; printf '%s\\n' \"$line\" >> \"$file\"",
-      "bash", root.vaultDir, root.vaultDir + "/" + datestamp + ".md", heading, "- " + timestamp + " \u2014 " + text.replace(/\n/g, " ")]
+    noteWriter.command = [helperPath, "note", root.vaultDir, datestamp + ".md", heading]
+    noteWriter.environment = { "SCRATCHPAD_NOTE": "- " + timestamp + " — " + text.replace(/\n/g, " ") }
+    noteWriter.stdinEnabled = false
     noteWriter.running = true
     root.pendingDismiss = true
   }
 
   property bool pendingDismiss: false
+
+  Process {
+    id: settingsGuard
+    running: false
+
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text.trim() !== "") root.log("settings writer stderr: " + text.trim())
+    }
+
+    onExited: function(exitCode) {
+      if (exitCode === 42) {
+        root.log("settings path is a symlink — refusing to save")
+        Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-notification-send", "Scratchpad", "Settings path looks unsafe (symlink) — not saved"])
+      } else if (exitCode !== 0) {
+        root.log("settings write failed (exit " + exitCode + ")")
+      }
+    }
+  }
 
   Process {
     id: noteWriter
@@ -274,6 +309,14 @@ Item {
 
     onExited: function(exitCode) {
       root.log("note write exited code=" + exitCode)
+      if (exitCode === 42) {
+        // Symlink (or path replacement) detected at the target — refuse the
+        // write and drop the note rather than follow it.
+        root.pendingDismiss = false
+        root.log("symlink detected at note path — refusing to write")
+        Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-notification-send", "Scratchpad", "Note not saved — target path looks unsafe (symlink)"])
+        return
+      }
       if (exitCode !== 0) {
         root.pendingDismiss = false
         root.log("note write failed (exit " + exitCode + ") — reopening setup")

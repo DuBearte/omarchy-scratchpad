@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.dubearte.scratchpad",
   "name": "Scratchpad for Obsidian",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "DuBearte",
   "license": "MIT",
   "description": "Quick-capture scratchpad: a keybinding or bar icon opens a text box whose notes append as timestamped bullets to daily markdown files in an Obsidian vault. Setup wizard auto-detects registered vaults.",

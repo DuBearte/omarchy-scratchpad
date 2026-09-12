@@ -79,16 +79,15 @@ setup wizard.
 - An Obsidian vault anywhere on disk (the plugin only writes markdown files —
   Obsidian itself doesn't need to be running)
 
-External commands the plugin invokes (all ship with a stock Omarchy install,
-so there is nothing extra to install):
+External commands and runtimes the plugin invokes (all ship with a stock
+Omarchy install, so there is nothing extra to install):
 
 | Command | Provided by | Used for |
 |---|---|---|
 | `hyprctl` | Hyprland | floating/centering the folder-picker window during setup |
 | `jq` | omarchy-base packages | parsing Obsidian's vault registry during vault detection |
 | `qml6` | Qt6 (a Quickshell runtime dependency) | the optional native folder-picker dialog |
-
-Core file operations (`mkdir`, `touch`, `grep`) use standard coreutils.
+| `python3` | python (a hard dependency of Omarchy's `uwsm` session manager) | `scripts/note-writer.py`, the writer that saves notes and settings |
 
 ## Notes
 
@@ -97,6 +96,12 @@ Core file operations (`mkdir`, `touch`, `grep`) use standard coreutils.
   can interfere with externally-created files
 - Settings live outside the plugin folder so saving them doesn't trigger a
   plugin hot-reload
+- All file writes go through a descriptor-based helper
+  (`scripts/note-writer.py`) that resolves the target directory without
+  following symlinks, opens the target file with `O_NOFOLLOW`, verifies it is
+  a regular file, and writes through that descriptor. If the vault folder,
+  daily note, or settings file is (or becomes) a symlink, the write fails
+  closed with a notification instead of following it.
 
 ## Updating
 
