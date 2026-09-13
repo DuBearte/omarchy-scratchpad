@@ -85,9 +85,8 @@ Omarchy install, so there is nothing extra to install):
 | Command | Provided by | Used for |
 |---|---|---|
 | `hyprctl` | Hyprland | floating/centering the folder-picker window during setup |
-| `jq` | omarchy-base packages | parsing Obsidian's vault registry during vault detection |
 | `qml6` | Qt6 (a Quickshell runtime dependency) | the optional native folder-picker dialog |
-| `python3` | python (a hard dependency of Omarchy's `uwsm` session manager) | `scripts/note-writer.py`, the writer that saves notes and settings |
+| `python3` | python (a hard dependency of Omarchy's `uwsm` session manager) | `scripts/note-writer.py`, the writer that saves notes and settings, and the bounded vault scanner |
 
 ## Notes
 
@@ -102,6 +101,12 @@ Omarchy install, so there is nothing extra to install):
   a regular file, and writes through that descriptor. If the vault folder,
   daily note, or settings file is (or becomes) a symlink, the write fails
   closed with a notification instead of following it.
+- First-run vault discovery is bounded and self-contained in the same helper
+  (`scan-vaults`): the Obsidian registry read is size-capped before parsing,
+  the `.obsidian` scan never follows symlinks and is capped by visited
+  directories, entries per directory, depth and result count, and the whole
+  scan runs under a hard deadline with a small validated JSON result. Setup
+  stays interactive even against a huge or hostile home directory.
 
 ## Updating
 

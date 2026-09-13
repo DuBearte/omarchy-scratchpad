@@ -168,12 +168,23 @@ Item {
     return parts.length ? parts[parts.length - 1] : path
   }
 
+  property bool scanTimedOut: false
+
+  // Bounded discovery runs entirely inside the helper (no bash/jq/find
+  // subprocess tree): the registry read is size-capped, the traversal is
+  // capped and deadline-bound, and the result is a small validated JSON
+  // object (see MAX_* constants in scripts/note-writer.py). The helper
+  // enforces its own 10s deadline; this timer is the UI-side fallback so
+  // setup always becomes interactive again.
   function startVaultScan() {
-    vaultScanner.command = ["bash", "-c",
-      "reg=$1; [[ -f $reg ]] && jq -r '.vaults[].path' \"$reg\" 2>/dev/null | while IFS= read -r p; do [[ -d \"$p\" ]] && printf '%s\\n' \"$p\"; done; find \"${2:-$HOME}\" -maxdepth 5 -type d -name .obsidian 2>/dev/null | sed 's|/.obsidian$||'",
-      "bash", Quickshell.env("HOME") + "/.config/obsidian/obsidian.json"]
+    if (vaultScanner.running) return // overlap guard: one scan at a time
+    root.scanTimedOut = false
+    vaultScanTimeout.restart()
+    vaultScanner.command = [helperPath, "scan-vaults", Quickshell.env("HOME")]
+    vaultScanner.environment = {}
+    vaultScanner.stdinEnabled = false
     vaultScanner.running = true
-    root.log("scanning for vaults")
+    root.log("scanning for vaults (bounded helper)")
   }
 
   Process {
@@ -186,18 +197,53 @@ Item {
     }
 
     onExited: function(exitCode) {
-      var seen = {}
+      vaultScanTimeout.stop()
       var out = []
-      var lines = String(vaultScanStdout.text || "").split("\n")
-      for (var i = 0; i < lines.length; i++) {
-        var p = lines[i].trim()
-        if (!p || seen[p]) continue
-        seen[p] = true
-        out.push(p)
+      if (exitCode === 0) {
+        // The helper emits at most ~16 KB of JSON (its own output cap).
+        try {
+          var parsed = JSON.parse(String(vaultScanStdout.text || ""))
+          if (parsed && Array.isArray(parsed.vaults)) {
+            for (var i = 0; i < parsed.vaults.length; i++) {
+              var p = parsed.vaults[i]
+              if (typeof p === "string" && p.indexOf("/") === 0 && p.indexOf("/../") === -1)
+                out.push(p)
+            }
+          }
+          if (parsed && parsed.truncated === true)
+            root.log("vault scan truncated (caps or deadline hit)")
+        } catch (e) {
+          root.log("vault scan output unreadable: " + e)
+        }
+      } else {
+        root.log("vault scan failed (exit " + exitCode + ")")
       }
-      root.vaults = out
+      var seen = {}
+      var deduped = []
+      for (var j = 0; j < out.length; j++) {
+        var path = out[j]
+        if (seen[path]) continue
+        seen[path] = true
+        deduped.push(path)
+      }
+      root.vaults = deduped
       root.vaultIndex = 0
-      root.log("vault scan: " + out.length + " vault(s) found")
+      root.log("vault scan: " + deduped.length + " vault(s) found")
+    }
+  }
+
+  Timer {
+    id: vaultScanTimeout
+    interval: 14000 // helper self-deadline is 10s; this is the UI fallback
+    running: false
+    repeat: false
+    onTriggered: {
+      if (!vaultScanner.running) return
+      root.scanTimedOut = true
+      vaultScanner.running = false
+      root.vaults = []
+      root.vaultIndex = 0
+      root.log("vault scan timed out — enter the path manually")
     }
   }
 
