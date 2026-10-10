@@ -58,7 +58,7 @@ o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle io.github.dubearte
 
 ## Configuration
 
-Settings live in `~/.config/omarchy/scratchpad/settings.json`:
+Settings live in `~/.config/omarchy/scratchpad-io.github.dubearte/settings.json`:
 
 ```json
 {
@@ -75,7 +75,7 @@ setup wizard.
 
 ## Requirements
 
-- Omarchy (Omarchy shell with plugin support)
+- Omarchy Quattro (the shell's plugin support)
 - An Obsidian vault anywhere on disk (the plugin only writes markdown files —
   Obsidian itself doesn't need to be running)
 
@@ -108,6 +108,15 @@ Omarchy install, so there is nothing extra to install):
   scan runs under a hard deadline with a small validated JSON result. Setup
   stays interactive even against a huge or hostile home directory.
 
+## Development
+
+Check your work the same way the shell does:
+
+```
+python3 tests/test_scan_vaults.py
+omarchy plugin validate ~/.config/omarchy/plugins/io.github.dubearte.scratchpad
+```
+
 ## Updating
 
 ```
@@ -136,9 +145,11 @@ Two things are left behind (both harmless, both your call):
   o.bind("SUPER + N", "Scratchpad", "omarchy-shell shell toggle io.github.dubearte.scratchpad")
   ```
 
-- **Saved settings** — `~/.config/omarchy/scratchpad/settings.json` (your
-  vault and folder choice). Delete the file (or the `scratchpad` directory)
-  if you don't want it remembered on a future reinstall.
+- **Saved settings** —
+  `~/.config/omarchy/scratchpad-io.github.dubearte/settings.json`
+  (your vault and folder choice). Delete the file (or the
+  `scratchpad-io.github.dubearte` directory) if you don't want it
+  remembered on a future reinstall.
 
 Notes already written into your vault are regular markdown files — removing
 the plugin never touches them.
