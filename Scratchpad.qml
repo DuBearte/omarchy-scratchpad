@@ -9,6 +9,7 @@ Item {
   id: root
 
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+  readonly property string home: Quickshell.env("HOME")
   property var shell: null
   property var manifest: null
 
@@ -46,7 +47,7 @@ Item {
   // Plugin settings location. Lives outside the plugin folder so saving it
   // doesn't trigger a plugin hot-reload.
   readonly property string settingsPath:
-    Quickshell.env("HOME") + "/.config/omarchy/scratchpad-io.github.dubearte/settings.json"
+    root.home + "/.config/omarchy/scratchpad-io.github.dubearte/settings.json"
 
   FileView {
     id: settingsFile
@@ -104,23 +105,27 @@ Item {
     return p
   }
 
+  function pad2(n) { return (n < 10 ? "0" : "") + n }
+
+  // Local date (not UTC), so the confirm screen names the same file capture() writes.
+  function datestamp(d) {
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+  }
+
   // ------------------------------------------------------------------- flow
 
   function open(payloadJson) {
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
     root.opened = true
-    root.vaultEntryMode = false
+    root.pendingNote = ""
     if (payload && payload.reconfigure === true) {
       root.log("reconfigure requested — forcing setup wizard")
-      root.step = "vault"
+      root.startSetup()
+    } else if (!root.configured) {
+      root.startSetup()
     } else {
-      root.step = root.configured ? "capture" : "vault"
-    }
-    if (root.step === "vault") {
-      root.startVaultScan()
-      Qt.callLater(function() { vaultList.forceActiveFocus() })
-    } else {
+      root.step = "capture"
       Qt.callLater(function() {
         input.clear()
         input.forceActiveFocus()
@@ -129,12 +134,25 @@ Item {
     root.log("open: step=" + root.step)
   }
 
-  function close() {
-    root.opened = false
+  // Values to restore if setup is abandoned (settings save only on confirm).
+  property var savedSetup: null
+
+  function startSetup() {
+    if (!root.savedSetup)
+      root.savedSetup = { vaultPath: root.vaultPath, folder: root.folder }
+    root.step = "vault"
+    root.vaultEntryMode = false
+    root.startVaultScan()
+    Qt.callLater(function() { vaultList.forceActiveFocus() })
   }
 
   function dismiss() {
     root.opened = false
+    if (root.savedSetup) {
+      root.vaultPath = root.savedSetup.vaultPath
+      root.folder = root.savedSetup.folder
+    }
+    root.savedSetup = null
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "io.github.dubearte.scratchpad")
   }
@@ -180,7 +198,7 @@ Item {
     if (vaultScanner.running) return // overlap guard: one scan at a time
     root.scanTimedOut = false
     vaultScanTimeout.restart()
-    vaultScanner.command = [helperPath, "scan-vaults", Quickshell.env("HOME")]
+    vaultScanner.command = [helperPath, "scan-vaults", root.home]
     vaultScanner.environment = {}
     vaultScanner.stdinEnabled = false
     vaultScanner.running = true
@@ -250,7 +268,6 @@ Item {
   function pickVault(path) {
     root.vaultPath = normalizeVaultPath(path)
     root.log("vault selected: " + root.vaultPath)
-    saveSettings()
     root.vaultEntryMode = false
     root.step = "folder"
     Qt.callLater(function() { setupInput.clear(); setupInput.forceActiveFocus() })
@@ -265,7 +282,6 @@ Item {
       }
       root.vaultPath = normalizeVaultPath(expanded)
       root.log("vault path set: " + root.vaultPath)
-      saveSettings()
       root.vaultEntryMode = false
       root.step = "folder"
       Qt.callLater(function() { setupInput.clear(); setupInput.forceActiveFocus() })
@@ -287,9 +303,13 @@ Item {
 
     if (root.step === "confirm") {
       saveSettings()
+      root.savedSetup = null
       root.log("setup complete — switching to capture")
       root.step = "capture"
-      Qt.callLater(function() { input.clear(); input.forceActiveFocus() })
+      // Restore a note whose save failed and sent the user through setup.
+      var restored = root.pendingNote
+      root.pendingNote = ""
+      Qt.callLater(function() { input.text = restored; input.forceActiveFocus() })
       return
     }
 
@@ -310,20 +330,20 @@ Item {
     }
 
     var now = new Date()
-    var pad = function(n) { return (n < 10 ? "0" : "") + n }
-    var datestamp = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate())
-    var timestamp = pad(now.getHours()) + ":" + pad(now.getMinutes())
-    var heading = "# " + datestamp
+    var date = root.datestamp(now)
+    var timestamp = root.pad2(now.getHours()) + ":" + root.pad2(now.getMinutes())
+    var heading = "# " + date
 
-    root.log("saving note to " + root.vaultDir + "/" + datestamp + ".md")
-    noteWriter.command = [helperPath, "note", root.vaultDir, datestamp + ".md", heading]
+    root.log("saving note to " + root.vaultDir + "/" + date + ".md")
+    root.pendingNote = text
+    noteWriter.command = [helperPath, "note", root.vaultPath, root.folder, date + ".md", heading]
     noteWriter.environment = { "SCRATCHPAD_NOTE": "- " + timestamp + " — " + text.replace(/\n/g, " ") }
     noteWriter.stdinEnabled = false
     noteWriter.running = true
-    root.pendingDismiss = true
   }
 
-  property bool pendingDismiss: false
+  // Text of the note being saved; kept if the save fails so it survives setup.
+  property string pendingNote: ""
 
   Process {
     id: settingsGuard
@@ -357,25 +377,18 @@ Item {
       root.log("note write exited code=" + exitCode)
       if (exitCode === 42) {
         // Symlink (or path replacement) detected at the target — refuse the
-        // write and drop the note rather than follow it.
-        root.pendingDismiss = false
+        // write rather than follow it. The note stays in the box.
         root.log("symlink detected at note path — refusing to write")
         Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-notification-send", "Scratchpad", "Note not saved — target path looks unsafe (symlink)"])
         return
       }
       if (exitCode !== 0) {
-        root.pendingDismiss = false
         root.log("note write failed (exit " + exitCode + ") — reopening setup")
         Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-notification-send", "Scratchpad", "Failed to save note \u2014 setup wizard will reopen to reconfigure"])
-        root.vaultPath = ""
-        root.folder = "Scratchpad"
-        root.step = "vault"
-        Qt.callLater(function() {
-          setupInput.clear()
-          setupInput.forceActiveFocus()
-        })
+        root.startSetup()
         return
       }
+      root.pendingNote = ""
       root.dismiss()
     }
   }
@@ -390,9 +403,7 @@ Item {
   function browseForVault() {
     if (folderPickerProcess.running) return
     pickerOutput = ""
-    folderPickerProcess.command = ["bash", "-lc",
-      'exec "$@"', "bash",
-      pluginDir + "/scripts/folder-picker.sh"]
+    folderPickerProcess.command = ["bash", pluginDir + "/scripts/folder-picker.sh"]
     folderPickerProcess.running = true
     root.log("browse: launching folder picker")
   }
@@ -419,7 +430,6 @@ Item {
       if (exitCode === 0 && selected) {
         root.vaultPath = normalizeVaultPath(uriToPath(selected))
         root.log("vault path picked: " + root.vaultPath)
-        saveSettings()
         root.step = "folder"
         Qt.callLater(function() { setupInput.clear(); setupInput.forceActiveFocus() })
       } else if (exitCode !== 0) {
@@ -520,7 +530,7 @@ Item {
             visible: root.step === "confirm"
             width: parent.width
             textFormat: Text.PlainText
-            text: root.vaultDir + "/" + new Date().toISOString().slice(0, 10) + ".md"
+            text: root.vaultDir + "/" + root.datestamp(new Date()) + ".md"
             color: Color.accent
             font.family: root.fontFamily
             font.pixelSize: Style.font.body

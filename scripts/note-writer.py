@@ -4,14 +4,15 @@ Scratchpad for Obsidian.
 
 Three modes:
 
-  note <vault-dir> <YYYY-MM-DD.md> <heading>
-      Appends one note line (env SCRATCHPAD_NOTE) to the daily file
-      inside <vault-dir>, creating the file and missing directories.
-      Prepends the heading line when the file does not already contain it.
+  note <vault> <folder> <YYYY-MM-DD.md> <heading>
+      Appends one note line (env SCRATCHPAD_NOTE) to the daily file in
+      <vault>/<folder>. The vault must already exist; <folder> and the
+      daily file are created when missing. Prepends the heading line when
+      the file does not already have it.
 
   replace-settings <settings.json>
-      Replaces the plugin settings file with the JSON payload from the
-      SCRATCHPAD_PAYLOAD environment variable (create or truncate).
+      Atomically replaces the plugin settings file with the JSON payload
+      from the SCRATCHPAD_PAYLOAD environment variable (temp file + rename).
 
   scan-vaults <home>
       Bounded vault discovery: reads the Obsidian registry (size-capped)
@@ -21,8 +22,13 @@ Three modes:
       "truncated": bool}).
 
 Security model (requested in the marketplace review of this plugin):
-  - The target directory is resolved component-wise with O_NOFOLLOW, so a
-    symlink at ANY path component fails closed instead of being followed.
+  - The vault and the plugin's own settings directory are the trust
+    boundary. Directories above them may be symlinks (/home -> /var/home,
+    dotfiles managed by stow, vaults on another disk); the vault itself is
+    opened with O_NOFOLLOW.
+  - Everything below the boundary is resolved component-wise with
+    O_NOFOLLOW, so a symlink inside the vault folder or the settings
+    directory fails closed instead of being followed.
   - The daily note / settings file is opened relative to that verified
     directory descriptor with O_NOFOLLOW, so a symlink planted at the file
     path is never followed. The descriptor is then verified to be a regular
@@ -126,20 +132,40 @@ def open_dir_component(parent_fd, name):
             fail("cannot open directory component %s: %s" % (name, e3.strerror))
 
 
-def resolve_dir_nofollow(path):
-    """Walk <path> component-wise from the root, never following symlinks,
-    and return a descriptor pinned to the final directory."""
+def check_abs_path(path, what):
+    if not path or not path.startswith("/"):
+        fail(what + " must be an absolute path")
     # Refuse raw '..' components before any normalization can collapse them.
     if any(component == ".." for component in path.split("/")):
-        fail("path must not contain '..': " + path)
-    path = os.path.abspath(path)
-    if path == "/":
-        return os.open("/", os.O_RDONLY | os.O_DIRECTORY)
-    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        fail(what + " must not contain '..': " + path)
+
+
+def open_boundary_dir(path):
+    """Open an existing directory as the trust boundary: symlinks in its
+    parents are followed, the directory itself must not be a symlink."""
+    path = os.path.abspath(path)  # also drops a trailing '/', which would
+    # make the kernel follow a final-component symlink despite O_NOFOLLOW
     try:
-        for component in path.split("/"):
+        return os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.ENOTDIR) and os.path.islink(path):
+            fail("symlink-detected: " + path, EXIT_SYMLINK)
+        if e.errno == errno.ENOENT:
+            fail("directory does not exist: " + path)
+        fail("cannot open directory %s: %s" % (path, e.strerror))
+
+
+def resolve_below_nofollow(base_fd, relpath):
+    """Walk <relpath> component-wise below <base_fd>, never following
+    symlinks and creating missing directories. Consumes base_fd and returns
+    a descriptor pinned to the final directory."""
+    fd = base_fd
+    try:
+        for component in relpath.split("/"):
             if component in ("", "."):
                 continue
+            if component == "..":
+                fail("path must not contain '..': " + relpath)
             fd, prev = open_dir_component(fd, component), fd
             os.close(prev)
     except BaseException:
@@ -180,9 +206,10 @@ def write_all(fd, data):
         view = view[written:]
 
 
-def do_note(vault_dir, filename, heading):
-    if not vault_dir or not vault_dir.startswith("/"):
-        fail("vault directory must be an absolute path")
+def do_note(vault, folder, filename, heading):
+    check_abs_path(vault, "vault")
+    if not folder or folder.startswith("/"):
+        fail("folder must be a relative path inside the vault")
     if (
         not filename
         or any(c not in NOTE_NAME_CHARS for c in filename)
@@ -193,7 +220,8 @@ def do_note(vault_dir, filename, heading):
     if not note:
         fail("no note text provided")
 
-    dir_fd = resolve_dir_nofollow(vault_dir)
+    # A missing vault is an error (likely a typo), never silently created.
+    dir_fd = resolve_below_nofollow(open_boundary_dir(vault), folder)
     try:
         fd = open_file_nofollow(dir_fd, filename, "append")
         try:
@@ -203,7 +231,7 @@ def do_note(vault_dir, filename, heading):
             # heading on an existing file, never to a lost or overwritten
             # note.
             st = os.fstat(fd)
-            if heading not in head_text(fd, st.st_size):
+            if heading not in head_text(fd, st.st_size).splitlines():
                 payload += heading.encode("utf-8") + b"\n"
             payload += note.encode("utf-8", "surrogateescape") + b"\n"
             write_all(fd, payload)
@@ -319,9 +347,7 @@ def scan_home_for_vaults(home):
                         and entry.is_dir(follow_symlinks=False)
                     ):
                         # A .obsidian directory is a marker, never traversed.
-                        vault_path = path_under(
-                            dir_fd, os.path.dirname(entry.name) or "."
-                        )
+                        vault_path = path_under(dir_fd, ".")
                         if vault_path and vault_path not in results:
                             results.append(vault_path)
                         found_here = True
@@ -377,9 +403,8 @@ def path_under(dir_fd, name):
 
 def is_real_dir(path):
     """True when <path> exists and is a real directory whose final component
-    is not a symlink. Parents are allowed to contain symlinks (matching the
-    old bash `[[ -d $p ]]` filter, and the writer only fails on symlinks at
-    or inside the vault itself)."""
+    is not a symlink. Parents are allowed to contain symlinks, matching the
+    writer, which only refuses symlinks at or inside the vault itself."""
     try:
         st = os.stat(path)
     except OSError:
@@ -392,7 +417,9 @@ def is_real_dir(path):
     except OSError:
         return False
     try:
-        os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=parent_fd)
+        os.close(os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=parent_fd
+        ))
         return True
     except OSError:
         # ELOOP here means the final component is a symlink; every other
@@ -446,33 +473,74 @@ def do_scan_vaults(home):
 
 
 def do_replace_settings(path):
-    if not path or not path.startswith("/"):
-        fail("settings path must be absolute")
+    check_abs_path(path, "settings path")
     payload = os.environ.get("SCRATCHPAD_PAYLOAD", "")
     if not payload:
         fail("no settings payload provided")
 
-    directory, filename = path.rsplit("/", 1)
-    dir_fd = resolve_dir_nofollow(directory)
+    path = os.path.abspath(path)
+    directory, filename = os.path.split(path)
+    parent, dirname = os.path.split(directory)
+    if not filename or not dirname:
+        fail("settings path must be <parent>/<dir>/<file>: " + path)
+    # The plugin's own settings directory and file never follow symlinks;
+    # the parent (e.g. ~/.config/omarchy, often a stow symlink) may.
     try:
-        fd = open_file_nofollow(dir_fd, filename, "truncate")
+        os.makedirs(parent, exist_ok=True)
+    except OSError as e:
+        fail("cannot create directory %s: %s" % (parent, e.strerror))
+    try:
+        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as e:
+        fail("cannot open directory %s: %s" % (parent, e.strerror))
+    dir_fd = resolve_below_nofollow(parent_fd, dirname)
+    try:
         try:
-            write_all(fd, payload.encode("utf-8", "surrogateescape"))
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+            st = os.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
+            if stat.S_ISLNK(st.st_mode):
+                fail("symlink-detected: " + filename, EXIT_SYMLINK)
+            if not stat.S_ISREG(st.st_mode):
+                fail("not a regular file: " + filename)
+        except FileNotFoundError:
+            pass
+        # Write a temp file and rename it over the target, so a crash never
+        # leaves a truncated settings file. rename() replaces the directory
+        # entry itself and never follows a symlink at the target.
+        tmp = ".%s.tmp-%d" % (filename, os.getpid())
+        try:
+            fd = os.open(
+                tmp,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o644,
+                dir_fd=dir_fd,
+            )
+        except OSError as e:
+            fail("cannot create %s: %s" % (tmp, e.strerror))
+        try:
+            try:
+                write_all(fd, payload.encode("utf-8", "surrogateescape"))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.rename(tmp, filename, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
     finally:
         os.close(dir_fd)
 
 
 def main(argv):
     if len(argv) < 2:
-        fail("usage: note-writer.py note <dir> <file> <heading> | "
+        fail("usage: note-writer.py note <vault> <folder> <file> <heading> | "
              "replace-settings <file> | scan-vaults <home>")
     if argv[1] == "note":
-        if len(argv) != 5:
-            fail("usage: note-writer.py note <dir> <file> <heading>")
-        do_note(argv[2], argv[3], argv[4])
+        if len(argv) != 6:
+            fail("usage: note-writer.py note <vault> <folder> <file> <heading>")
+        do_note(argv[2], argv[3], argv[4], argv[5])
     elif argv[1] == "replace-settings":
         if len(argv) != 3:
             fail("usage: note-writer.py replace-settings <file>")

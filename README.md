@@ -86,6 +86,7 @@ Omarchy install, so there is nothing extra to install):
 |---|---|---|
 | `hyprctl` | Hyprland | floating/centering the folder-picker window during setup |
 | `qml6` | Qt6 (a Quickshell runtime dependency) | the optional native folder-picker dialog |
+| `jq` | jq (ships with Omarchy) | finding the folder-picker window in `hyprctl clients` output |
 | `python3` | python (a hard dependency of Omarchy's `uwsm` session manager) | `scripts/note-writer.py`, the writer that saves notes and settings, and the bounded vault scanner |
 
 ## Notes
@@ -96,11 +97,20 @@ Omarchy install, so there is nothing extra to install):
 - Settings live outside the plugin folder so saving them doesn't trigger a
   plugin hot-reload
 - All file writes go through a descriptor-based helper
-  (`scripts/note-writer.py`) that resolves the target directory without
-  following symlinks, opens the target file with `O_NOFOLLOW`, verifies it is
-  a regular file, and writes through that descriptor. If the vault folder,
-  daily note, or settings file is (or becomes) a symlink, the write fails
-  closed with a notification instead of following it.
+  (`scripts/note-writer.py`). The vault you choose is the trust boundary:
+  directories above it may be symlinks (e.g. `/home` → `/var/home`, or a
+  vault on another disk), but the vault itself and everything inside it is
+  resolved without following symlinks, the target file is opened with
+  `O_NOFOLLOW`, verified to be a regular file, and written through that
+  descriptor. If the vault, its notes subfolder, or the daily note is (or
+  becomes) a symlink, the write fails closed with a notification instead of
+  following it. The same applies to the settings directory and file
+  (`~/.config/omarchy` above them may be a symlink, e.g. from stow).
+- The vault folder must already exist: a mistyped path fails and reopens
+  setup instead of silently creating a new folder. The notes subfolder is
+  created on the first save.
+- Settings are only saved when you confirm the setup wizard, and are
+  replaced atomically (temp file + rename).
 - First-run vault discovery is bounded and self-contained in the same helper
   (`scan-vaults`): the Obsidian registry read is size-capped before parsing,
   the `.obsidian` scan never follows symlinks and is capped by visited

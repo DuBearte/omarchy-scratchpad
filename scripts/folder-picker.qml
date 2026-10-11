@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Dialogs
 
@@ -10,10 +11,10 @@ Window {
   opacity: 0
   flags: Qt.Dialog
 
-  property string startUri: "file:///home/jk/Documents/Obsidian"
+  property url startUri: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
 
   Component.onCompleted: {
-    if (root.startUri !== "")
+    if (root.startUri.toString() !== "")
       folderDialog.currentFolder = root.startUri
     folderDialog.open()
   }

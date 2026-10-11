@@ -317,26 +317,75 @@ def test_output_shape_and_cap():
 
 def test_note_write_still_works():
     with tempfile.TemporaryDirectory() as tmp:
-        vault_dir = os.path.join(tmp, "vault", "Scratch")
-        code, out, err = run_helper("note", vault_dir, "2026-09-13.md", "# 2026-09-13",
+        vault = os.path.join(tmp, "vault")
+        os.makedirs(vault)
+        note_file = os.path.join(vault, "Scratch", "2026-09-13.md")
+        code, out, err = run_helper("note", vault, "Scratch", "2026-09-13.md", "# 2026-09-13",
                                     env_extra={"SCRATCHPAD_NOTE": "- 10:00 — hello"})
         check("writer: note appends", code == 0, err)
-        with open(os.path.join(vault_dir, "2026-09-13.md")) as fh:
+        with open(note_file) as fh:
             content = fh.read()
         check("writer: heading + note present", content == "# 2026-09-13\n- 10:00 — hello\n", repr(content))
-        code, _, _ = run_helper("note", vault_dir, "2026-09-13.md", "# 2026-09-13",
+        code, _, _ = run_helper("note", vault, "Scratch", "2026-09-13.md", "# 2026-09-13",
                                 env_extra={"SCRATCHPAD_NOTE": "- 10:01 — second"})
-        with open(os.path.join(vault_dir, "2026-09-13.md")) as fh:
+        with open(note_file) as fh:
             content = fh.read()
         check("writer: second note, no dup heading", content.count("# 2026-09-13") == 1, content)
 
 
+def test_note_heading_is_line_match():
+    with tempfile.TemporaryDirectory() as vault:
+        path = os.path.join(vault, "S", "2026-09-13.md")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as fh:
+            fh.write("## 2026-09-13\n- 09:00 — see # 2026-09-13\n")
+        code, _, err = run_helper("note", vault, "S", "2026-09-13.md", "# 2026-09-13",
+                                  env_extra={"SCRATCHPAD_NOTE": "- 10:00 — x"})
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+        check("writer: substring of heading does not count as heading",
+              code == 0 and "# 2026-09-13" in lines, err + repr(lines))
+
+
+def test_note_missing_vault_not_created():
+    with tempfile.TemporaryDirectory() as tmp:
+        typo = os.path.join(tmp, "typo", "Vault")
+        code, _, err = run_helper("note", typo, "Scratch", "2026-09-13.md", "# d",
+                                  env_extra={"SCRATCHPAD_NOTE": "x"})
+        check("writer: missing vault fails", code == 1, str(code) + " " + err)
+        check("writer: missing vault not created", not os.path.exists(os.path.join(tmp, "typo")))
+
+
+def test_note_parent_symlink_allowed():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "real", "Vault"))
+        os.symlink(os.path.join(tmp, "real"), os.path.join(tmp, "home-link"))
+        vault = os.path.join(tmp, "home-link", "Vault")
+        code, _, err = run_helper("note", vault, "Scratch", "2026-09-13.md", "# d",
+                                  env_extra={"SCRATCHPAD_NOTE": "x"})
+        check("writer: symlinked parent of vault allowed", code == 0, str(code) + " " + err)
+        check("writer: note landed in real vault",
+              os.path.isfile(os.path.join(tmp, "real", "Vault", "Scratch", "2026-09-13.md")))
+        # A symlink inside the vault is still refused.
+        os.symlink(tmp, os.path.join(tmp, "real", "Vault", "Evil"))
+        code, _, _ = run_helper("note", vault, "Evil", "2026-09-13.md", "# d",
+                                env_extra={"SCRATCHPAD_NOTE": "x"})
+        check("writer: symlink inside vault refused exit 42", code == 42, str(code))
+
+
 def test_settings_and_symlink_refusal():
     with tempfile.TemporaryDirectory() as tmp:
-        settings = os.path.join(tmp, "settings.json")
-        code, _, _ = run_helper("replace-settings", settings, env_extra={"SCRATCHPAD_PAYLOAD": '{"a": 1}'})
+        settings_dir = os.path.join(tmp, "scratchpad")
+        settings = os.path.join(settings_dir, "settings.json")
+        code, _, err = run_helper("replace-settings", settings, env_extra={"SCRATCHPAD_PAYLOAD": '{"a": 1}'})
+        check("writer: settings dir created", code == 0, err)
         with open(settings) as fh:
             check("writer: settings roundtrip", json.load(fh) == {"a": 1})
+        code, _, _ = run_helper("replace-settings", settings, env_extra={"SCRATCHPAD_PAYLOAD": '{"a": 3}'})
+        with open(settings) as fh:
+            check("writer: settings overwrite", json.load(fh) == {"a": 3})
+        check("writer: no temp files left", os.listdir(settings_dir) == ["settings.json"],
+              str(os.listdir(settings_dir)))
         os.remove(settings)
         # A symlink planted at the settings path must be refused and its
         # target left untouched (decoy lives inside the sandbox).
@@ -348,14 +397,25 @@ def test_settings_and_symlink_refusal():
         check("writer: settings symlink refused exit 42", code == 42, str(code) + " " + err)
         with open(decoy) as fh:
             check("writer: symlink decoy untouched", fh.read() == "decoy-original")
+        # A symlinked settings directory is refused, a symlinked parent is not.
+        os.symlink(tmp, os.path.join(tmp, "dirlink"))
+        code, _, _ = run_helper("replace-settings", os.path.join(tmp, "dirlink", "settings.json"),
+                                env_extra={"SCRATCHPAD_PAYLOAD": "{}"})
+        check("writer: symlinked settings dir refused exit 42", code == 42, str(code))
+        os.symlink(tmp, os.path.join(tmp, "parentlink"))
+        code, _, err = run_helper("replace-settings",
+                                  os.path.join(tmp, "parentlink", "newdir", "settings.json"),
+                                  env_extra={"SCRATCHPAD_PAYLOAD": "{}"})
+        check("writer: symlinked settings parent allowed", code == 0, str(code) + " " + err)
         # Note into a symlinked vault dir is refused
         real = os.path.join(tmp, "real")
         os.makedirs(real)
         link = os.path.join(tmp, "link")
         os.symlink(real, link)
-        code, _, _ = run_helper("note", link, "2026-09-13.md", "# d",
-                                env_extra={"SCRATCHPAD_NOTE": "x"})
-        check("writer: symlinked vault refused exit 42", code == 42, str(code))
+        for vault in (link, link + "/"):
+            code, _, _ = run_helper("note", vault, "S", "2026-09-13.md", "# d",
+                                    env_extra={"SCRATCHPAD_NOTE": "x"})
+            check("writer: symlinked vault refused exit 42 (%s)" % vault[-5:], code == 42, str(code))
 
 
 def test_fd_limit_under_traversal():
@@ -386,7 +446,6 @@ def test_race_symlink_swap_during_scan():
     stop = {}
 
     def swapper():
-        import threading
         link_path = os.path.join(home, "flipper")
         real_dir = os.path.join(home, "flipper-real")
         os.makedirs(real_dir, exist_ok=True)
@@ -425,7 +484,7 @@ def test_race_symlink_swap_during_scan():
 
 def main():
     tests = [
-        test_registry_filters,
+        test_registry_basic,
         test_registry_garbage_and_oversize,
         test_registry_filters,
         test_scan_find_and_dedup,
@@ -437,6 +496,9 @@ def main():
         test_home_edge_cases,
         test_output_shape_and_cap,
         test_note_write_still_works,
+        test_note_heading_is_line_match,
+        test_note_missing_vault_not_created,
+        test_note_parent_symlink_allowed,
         test_settings_and_symlink_refusal,
         test_fd_limit_under_traversal,
         test_race_symlink_swap_during_scan,
